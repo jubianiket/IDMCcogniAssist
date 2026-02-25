@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Send, Sparkles, User, Database, Globe, Layers, AlertCircle } from "lucide-react";
+import { Send, Sparkles, User, Database, Globe, Layers, AlertCircle, Paperclip, X, FileText, Image as ImageIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -9,26 +9,41 @@ import { Badge } from "@/components/ui/badge";
 import { comprehensiveIDMCInsights } from "@/ai/flows/comprehensive-idmc-insights";
 import { contextualIDMCAnswers } from "@/ai/flows/contextual-idmc-answers";
 import { idmcQuestionAnswering } from "@/ai/flows/idmc-question-answering";
+import { idmcAttachmentAnalysis } from "@/ai/flows/attachment-analysis";
 import { cn } from "@/lib/utils";
+import { toast } from "@/hooks/use-toast";
 
 type MessageType = {
   role: "user" | "ai";
   content: string;
   sources?: string[];
   mode?: string;
+  attachment?: {
+    url: string;
+    type: string;
+    name: string;
+  };
+};
+
+type Attachment = {
+  file: File;
+  dataUri: string;
+  type: string;
 };
 
 export function ChatInterface() {
   const [messages, setMessages] = useState<MessageType[]>([
     {
       role: "ai",
-      content: "Hello! I am your IDMC CogniAssistant. I can help you with Informatica Data Management Cloud (IDMC) documentation, integration patterns, data quality, or governance questions. How can I assist you today?",
+      content: "Hello! I am your IDMC CogniAssistant. I can help you with Informatica Data Management Cloud (IDMC) documentation, integration patterns, data quality, or governance questions. You can also upload screenshots or diagrams for analysis! How can I assist you today?",
     },
   ]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [activeMode, setActiveMode] = useState<"standard" | "contextual" | "comprehensive">("comprehensive");
+  const [pendingAttachment, setPendingAttachment] = useState<Attachment | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -39,20 +54,75 @@ export function ChatInterface() {
     }
   }, [messages, isLoading]);
 
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 10 * 1024 * 1024) {
+      toast({
+        variant: "destructive",
+        title: "File too large",
+        description: "Please upload a file smaller than 10MB.",
+      });
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setPendingAttachment({
+        file,
+        dataUri: reader.result as string,
+        type: file.type,
+      });
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const removeAttachment = () => {
+    setPendingAttachment(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  };
+
   const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (!input.trim() || isLoading) return;
+    if ((!input.trim() && !pendingAttachment) || isLoading) return;
 
     const userMessage = input.trim();
+    const currentAttachment = pendingAttachment;
+    
     setInput("");
-    setMessages((prev) => [...prev, { role: "user", content: userMessage }]);
+    setPendingAttachment(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+
+    setMessages((prev) => [
+      ...prev, 
+      { 
+        role: "user", 
+        content: userMessage || (currentAttachment ? "Analyzing attachment..." : ""),
+        attachment: currentAttachment ? {
+          url: currentAttachment.dataUri,
+          type: currentAttachment.type,
+          name: currentAttachment.file.name
+        } : undefined
+      }
+    ]);
     setIsLoading(true);
 
     try {
       let aiResponse = "";
       let sources: string[] | undefined;
 
-      if (activeMode === "comprehensive") {
+      if (currentAttachment) {
+        // Use attachment analysis flow if a file is present
+        const result = await idmcAttachmentAnalysis({ 
+          question: userMessage || "Explain what is in this attachment related to IDMC.",
+          attachmentDataUri: currentAttachment.dataUri,
+          attachmentType: currentAttachment.type
+        });
+        aiResponse = result.answer;
+      } else if (activeMode === "comprehensive") {
         const result = await comprehensiveIDMCInsights({ question: userMessage });
         aiResponse = result.answer;
       } else if (activeMode === "contextual") {
@@ -66,7 +136,7 @@ export function ChatInterface() {
 
       setMessages((prev) => [
         ...prev,
-        { role: "ai", content: aiResponse, sources, mode: activeMode },
+        { role: "ai", content: aiResponse, sources, mode: currentAttachment ? "attachment-analysis" : activeMode },
       ]);
     } catch (error) {
       setMessages((prev) => [
@@ -124,6 +194,25 @@ export function ChatInterface() {
                   )}
                 </div>
                 <div className={message.role === "user" ? "chat-bubble-user" : "chat-bubble-ai"}>
+                  {message.attachment && (
+                    <div className="mb-3 p-2 bg-background/20 rounded-lg border border-white/10 flex items-center gap-3 overflow-hidden">
+                      {message.attachment.type.startsWith('image/') ? (
+                        <img 
+                          src={message.attachment.url} 
+                          alt="Attachment" 
+                          className="w-12 h-12 object-cover rounded border border-white/20" 
+                        />
+                      ) : (
+                        <div className="w-12 h-12 bg-white/10 rounded flex items-center justify-center">
+                          <FileText className="w-6 h-6 text-white" />
+                        </div>
+                      )}
+                      <div className="flex flex-col min-w-0">
+                        <span className="text-[10px] font-bold opacity-70 uppercase">Attachment</span>
+                        <span className="text-xs truncate font-medium">{message.attachment.name}</span>
+                      </div>
+                    </div>
+                  )}
                   <p className="text-sm leading-relaxed whitespace-pre-wrap">{message.content}</p>
                   
                   {message.sources && message.sources.length > 0 && (
@@ -170,12 +259,36 @@ export function ChatInterface() {
       </div>
 
       <div className="mt-4 bg-background border rounded-2xl p-4 shadow-lg focus-within:ring-2 ring-primary/20 transition-all">
+        {pendingAttachment && (
+          <div className="mb-3 flex items-center gap-3 p-2 bg-muted/50 rounded-xl border animate-in fade-in slide-in-from-bottom-2 duration-200">
+            {pendingAttachment.type.startsWith('image/') ? (
+              <img 
+                src={pendingAttachment.dataUri} 
+                alt="Pending" 
+                className="w-10 h-10 object-cover rounded border" 
+              />
+            ) : (
+              <div className="w-10 h-10 bg-primary/10 rounded flex items-center justify-center">
+                <FileText className="w-5 h-5 text-primary" />
+              </div>
+            )}
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-semibold truncate">{pendingAttachment.file.name}</p>
+              <p className="text-[10px] text-muted-foreground uppercase">Ready to upload</p>
+            </div>
+            <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full" onClick={removeAttachment}>
+              <X className="w-4 h-4" />
+            </Button>
+          </div>
+        )}
+
         <div className="flex gap-4 mb-4 overflow-x-auto pb-2 scrollbar-hide">
           <Button 
             variant={activeMode === "comprehensive" ? "default" : "outline"} 
             size="sm" 
             className="rounded-full text-xs shrink-0"
             onClick={() => setActiveMode("comprehensive")}
+            disabled={!!pendingAttachment}
           >
             <Layers className="w-3 h-3 mr-1.5" />
             Comprehensive Multi-Model
@@ -185,6 +298,7 @@ export function ChatInterface() {
             size="sm" 
             className="rounded-full text-xs shrink-0"
             onClick={() => setActiveMode("contextual")}
+            disabled={!!pendingAttachment}
           >
             <Database className="w-3 h-3 mr-1.5" />
             Contextual Knowledge
@@ -194,22 +308,38 @@ export function ChatInterface() {
             size="sm" 
             className="rounded-full text-xs shrink-0"
             onClick={() => setActiveMode("standard")}
+            disabled={!!pendingAttachment}
           >
             <Sparkles className="w-3 h-3 mr-1.5" />
             Standard Answer
           </Button>
         </div>
         <div className="flex items-end gap-2">
+          <input 
+            type="file" 
+            className="hidden" 
+            ref={fileInputRef} 
+            onChange={handleFileChange}
+            accept="image/*,.pdf,.txt"
+          />
+          <Button 
+            variant="ghost" 
+            size="icon" 
+            className="rounded-xl h-10 w-10 shrink-0 text-muted-foreground"
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <Paperclip className="w-4 h-4" />
+          </Button>
           <Textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Ask anything about IDMC..."
+            placeholder={pendingAttachment ? "Describe what to analyze in the file..." : "Ask anything about IDMC..."}
             className="min-h-[60px] max-h-[200px] border-none focus-visible:ring-0 resize-none p-0 bg-transparent"
           />
           <Button 
             size="icon" 
-            disabled={!input.trim() || isLoading} 
+            disabled={(!input.trim() && !pendingAttachment) || isLoading} 
             onClick={() => handleSubmit()}
             className="rounded-xl h-10 w-10 shrink-0 shadow-lg shadow-primary/20"
           >
@@ -219,7 +349,7 @@ export function ChatInterface() {
         <div className="mt-2 flex items-center gap-2">
           <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
              <AlertCircle className="w-3 h-3" />
-             AI-generated content can occasionally contain inaccuracies.
+             {pendingAttachment ? "Multimodal mode enabled." : "AI-generated content can occasionally contain inaccuracies."}
           </div>
         </div>
       </div>
