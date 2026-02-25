@@ -8,7 +8,7 @@ const nextConfig: NextConfig = {
   eslint: {
     ignoreDuringBuilds: true,
   },
-  serverExternalPackages: ['genkit', '@genkit-ai/google-genai', 'zod'],
+  serverExternalPackages: ['genkit', '@genkit-ai/google-genai', 'zod', 'mammoth', 'xlsx'],
   images: {
     remotePatterns: [
       {

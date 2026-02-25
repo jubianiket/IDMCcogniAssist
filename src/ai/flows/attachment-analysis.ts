@@ -1,4 +1,3 @@
-
 'use server';
 /**
  * @fileOverview A Genkit flow for answering user questions about Informatica Data Management Cloud (IDMC)
@@ -45,12 +44,14 @@ Your task is to:
 2. Answer the user's question accurately using both your general IDMC knowledge and the specific details found in the attachment.
 
 {{#if extractedText}}
-EXTRACTED CONTENT FROM DOCUMENT:
+EXTRACTED CONTENT FROM DOCUMENT (Word/Excel/Text):
+--- START OF CONTENT ---
 {{{extractedText}}}
+--- END OF CONTENT ---
 {{/if}}
 
 {{#if isMediaSupported}}
-MEDIA ATTACHMENT: {{media url=attachmentDataUri}}
+MEDIA ATTACHMENT (Image/PDF): {{media url=attachmentDataUri}}
 {{/if}}
 
 Question: {{{question}}}`,
@@ -61,25 +62,47 @@ Question: {{{question}}}`,
  */
 async function extractTextFromOffice(dataUri: string, mimeType: string): Promise<string> {
   const base64Data = dataUri.split(',')[1];
+  if (!base64Data) return 'Error: Invalid file data.';
+  
   const buffer = Buffer.from(base64Data, 'base64');
 
   try {
-    if (mimeType.includes('officedocument.wordprocessingml.document') || mimeType.includes('msword')) {
+    // Word Documents (.docx)
+    if (
+      mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || 
+      mimeType.includes('wordprocessingml') ||
+      mimeType.includes('officedocument.word')
+    ) {
       const result = await mammoth.extractRawText({ buffer });
-      return result.value;
-    } else if (mimeType.includes('officedocument.spreadsheetml.sheet') || mimeType.includes('ms-excel')) {
+      return result.value || 'The Word document appears to be empty.';
+    } 
+    
+    // Excel Spreadsheets (.xlsx, .xls, .csv)
+    if (
+      mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+      mimeType === 'application/vnd.ms-excel' ||
+      mimeType.includes('spreadsheetml') ||
+      mimeType.includes('excel') ||
+      mimeType === 'text/csv'
+    ) {
       const workbook = xlsx.read(buffer, { type: 'buffer' });
       let text = '';
       workbook.SheetNames.forEach((sheetName) => {
-        text += `\nSheet: ${sheetName}\n`;
+        text += `\n[Sheet: ${sheetName}]\n`;
         const sheet = workbook.Sheets[sheetName];
         text += xlsx.utils.sheet_to_csv(sheet);
       });
-      return text;
+      return text || 'The spreadsheet appears to be empty.';
     }
+
+    // Fallback for .doc (Mammoth doesn't support .doc, only .docx)
+    if (mimeType === 'application/msword') {
+      return 'Notice: This appears to be an older .doc format. Please convert it to .docx for full text extraction support.';
+    }
+
   } catch (error) {
     console.error('Error extracting text from office document:', error);
-    return 'Error: Could not extract text from this document.';
+    return `Error: Could not extract text from this ${mimeType} document.`;
   }
   return '';
 }
@@ -92,18 +115,27 @@ const idmcAttachmentAnalysisFlow = ai.defineFlow(
   },
   async (input) => {
     const mimeType = input.attachmentType || '';
+    
+    // Gemini supports Images and PDFs directly
     const isImageOrPdf = mimeType.startsWith('image/') || mimeType === 'application/pdf';
     
     let extractedText = '';
     let isMediaSupported = isImageOrPdf;
 
-    // For Office files, extract text manually as Gemini data URIs only support Image, Video, Audio, and PDF
-    if (mimeType.includes('word') || mimeType.includes('excel') || mimeType.includes('spreadsheet') || mimeType.includes('text/plain')) {
-      if (mimeType === 'text/plain') {
-        extractedText = Buffer.from(input.attachmentDataUri.split(',')[1], 'base64').toString('utf-8');
-      } else {
-        extractedText = await extractTextFromOffice(input.attachmentDataUri, mimeType);
-      }
+    // For Office files and Plain Text, we extract text manually
+    const isOffice = mimeType.includes('word') || 
+                     mimeType.includes('excel') || 
+                     mimeType.includes('spreadsheet') || 
+                     mimeType.includes('officedocument') ||
+                     mimeType === 'application/msword';
+    
+    const isPlainText = mimeType === 'text/plain';
+
+    if (isPlainText) {
+      const base64Data = input.attachmentDataUri.split(',')[1];
+      extractedText = Buffer.from(base64Data, 'base64').toString('utf-8');
+    } else if (isOffice) {
+      extractedText = await extractTextFromOffice(input.attachmentDataUri, mimeType);
     }
 
     const { output } = await attachmentPrompt({
