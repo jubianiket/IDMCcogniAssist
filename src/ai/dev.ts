@@ -1,1 +1,6 @@
-// Flows will be imported for their side effects in this file.
+import { config } from 'dotenv';
+config();
+
+import '@/ai/flows/idmc-question-answering.ts';
+import '@/ai/flows/contextual-idmc-answers.ts';
+import '@/ai/flows/comprehensive-idmc-insights.ts';
