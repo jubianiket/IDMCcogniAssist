@@ -1,7 +1,8 @@
+
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Send, Sparkles, User, Database, Globe, Layers, AlertCircle, Paperclip, X, FileText, Image as ImageIcon } from "lucide-react";
+import { Send, Sparkles, User, Database, Globe, Layers, AlertCircle, Paperclip, X, FileText, Image as ImageIcon, FileSpreadsheet, File } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -35,7 +36,7 @@ export function ChatInterface() {
   const [messages, setMessages] = useState<MessageType[]>([
     {
       role: "ai",
-      content: "Hello! I am your IDMC CogniAssistant. I can help you with Informatica Data Management Cloud (IDMC) documentation, integration patterns, data quality, or governance questions. You can also upload screenshots or diagrams for analysis! How can I assist you today?",
+      content: "Hello! I am your IDMC CogniAssistant. I can help you with Informatica Data Management Cloud (IDMC) documentation, integration patterns, data quality, or governance questions. You can also upload screenshots, architecture diagrams, or even Excel/Word docs for analysis! How can I assist you today?",
     },
   ]);
   const [input, setInput] = useState("");
@@ -85,6 +86,14 @@ export function ChatInterface() {
     }
   };
 
+  const getFileIcon = (type: string) => {
+    if (type.startsWith('image/')) return <ImageIcon className="w-6 h-6 text-blue-500" />;
+    if (type === 'application/pdf') return <FileText className="w-6 h-6 text-red-500" />;
+    if (type.includes('spreadsheet') || type.includes('excel')) return <FileSpreadsheet className="w-6 h-6 text-green-600" />;
+    if (type.includes('word') || type.includes('officedocument.wordprocessingml')) return <FileText className="w-6 h-6 text-blue-700" />;
+    return <File className="w-6 h-6 text-muted-foreground" />;
+  };
+
   const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
     if ((!input.trim() && !pendingAttachment) || isLoading) return;
@@ -100,7 +109,7 @@ export function ChatInterface() {
       ...prev, 
       { 
         role: "user", 
-        content: userMessage || (currentAttachment ? "Analyzing attachment..." : ""),
+        content: userMessage || (currentAttachment ? `Analyzing ${currentAttachment.file.name}...` : ""),
         attachment: currentAttachment ? {
           url: currentAttachment.dataUri,
           type: currentAttachment.type,
@@ -115,9 +124,8 @@ export function ChatInterface() {
       let sources: string[] | undefined;
 
       if (currentAttachment) {
-        // Use attachment analysis flow if a file is present
         const result = await idmcAttachmentAnalysis({ 
-          question: userMessage || "Explain what is in this attachment related to IDMC.",
+          question: userMessage || "Analyze this file and explain its relevance to IDMC.",
           attachmentDataUri: currentAttachment.dataUri,
           attachmentType: currentAttachment.type
         });
@@ -204,7 +212,7 @@ export function ChatInterface() {
                         />
                       ) : (
                         <div className="w-12 h-12 bg-white/10 rounded flex items-center justify-center">
-                          <FileText className="w-6 h-6 text-white" />
+                          {getFileIcon(message.attachment.type)}
                         </div>
                       )}
                       <div className="flex flex-col min-w-0">
@@ -269,7 +277,7 @@ export function ChatInterface() {
               />
             ) : (
               <div className="w-10 h-10 bg-primary/10 rounded flex items-center justify-center">
-                <FileText className="w-5 h-5 text-primary" />
+                {getFileIcon(pendingAttachment.type)}
               </div>
             )}
             <div className="flex-1 min-w-0">
@@ -320,7 +328,7 @@ export function ChatInterface() {
             className="hidden" 
             ref={fileInputRef} 
             onChange={handleFileChange}
-            accept="image/*,.pdf,.txt"
+            accept="image/*,.pdf,.txt,.doc,.docx,.xls,.xlsx,.ppt,.pptx"
           />
           <Button 
             variant="ghost" 
